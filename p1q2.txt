@@ -1,0 +1,94 @@
+;====================================================================
+; Main.asm file for ATmega64
+; Created:   Tue Jul 2 2024
+;====================================================================
+
+.include "m64def.inc"
+
+;====================================================================
+; RESET and INTERRUPT VECTORS
+;====================================================================
+      .ORG 0x0000
+      RJMP Start               ; Reset Vector
+      .ORG INT2ADDR            ; External Interrupt Request 2
+      RJMP EXT_INT2_ISR
+      .ORG INT6ADDR            ; External Interrupt Request 6
+      RJMP EXT_INT6_ISR
+
+;====================================================================
+; CODE SEGMENT
+;====================================================================
+      .ORG 0x0050
+Start:
+      LDI R16, (1<<SRE)
+      OUT MCUCR, R16          ; Enable external memory interface
+      LDI R20, high(RAMEND)
+      OUT SPH, R20            ; Initialize Stack Pointer (high)
+      LDI R20, low(RAMEND)
+      OUT SPL, R20            ; Initialize Stack Pointer (low)
+      LDI XH, 0x25            ; Initialize X register (high)
+      LDI XL, 0x00            ; Initialize X register (low)
+
+      ; Configure INT2 for falling edge
+      LDI R16, (1<<ISC21)     ; ISC21 = 1, ISC20 = 0 (falling edge)
+      STS EICRA, R16
+
+      ; Configure INT6 for any edge (both rising and falling)
+      LDI R16, (1<<ISC60) | (1<<ISC61)
+      STS EICRB, R16
+
+      ; Enable INT2 and INT6
+      LDI R16, (1<<INT2) | (1<<INT6)
+      OUT EIMSK, R16
+
+      SEI                      ; Enable Global Interrupts
+      ; Write your main code here
+
+Loop:
+      LD R16, X
+      RCALL COUNT_ONE_BITS
+      SBRC R18, 0
+      RJMP ODD_COUNT
+      RJMP EVEN_COUNT
+
+ODD_COUNT:
+      LSR R16
+      RJMP STORE_RESULT
+
+EVEN_COUNT:
+      LSR R16
+      LSR R16
+      LSR R16
+
+STORE_RESULT:
+      ST X+, R16
+      CPI XH, 0x40
+      BRNE Loop
+      CPI XL, 0x00
+      BRNE Loop
+      RJMP End
+
+COUNT_ONE_BITS:
+      LDI R17, 8
+      CLR R18
+      MOV R21, R16
+
+COUNT_LOOP:
+      SBRC R21, 0
+      INC R18
+      LSR R21
+      DEC R17
+      BRNE COUNT_LOOP
+      RET
+
+End:  RJMP End
+;====================================================================
+
+EXT_INT2_ISR:
+      STS 0x4010, R6
+      RETI
+      
+EXT_INT6_ISR:
+      STS 0x4020, R7
+      RETI
+

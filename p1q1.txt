@@ -1,0 +1,103 @@
+; Definitions
+.equ F_CPU = 8000000         ; CPU frequency (8MHz)
+.equ PRESCALER = 8           ; Timer prescaler
+.equ TOP = (F_CPU / (PRESCALER * 1000)) - 1  ; TOP value for 1kHz PWM
+
+; Register definitions
+.def temp = r16              ; Temporary register
+.def duty_cycle = r17        ; PWM duty cycle
+.def counter = r18           ; Counter for timing
+.def desired_speed = r19     ; Desired motor speed
+.def current_speed = r20     ; Current motor speed
+
+; Interrupt vectors
+.org 0x0000
+RJMP Start
+.org OC1Aaddr
+RJMP Timer1_COMPA
+
+Start:
+    ; Initialize stack pointer
+    LDI temp, HIGH(RAMEND)
+    OUT SPH, temp
+    LDI temp, LOW(RAMEND)
+    OUT SPL, temp
+
+    ; Configure Timer1 for Fast PWM mode
+    LDI temp, (1<<COM1A1)|(1<<WGM11)|(1<<WGM10)
+    OUT TCCR1A, temp
+    LDI temp, (1<<WGM13)|(1<<WGM12)|(1<<CS11)
+    OUT TCCR1B, temp
+
+    ; Set TOP value for 1kHz PWM
+    LDI temp, HIGH(TOP)
+    OUT ICR1H, temp
+    LDI temp, LOW(TOP)
+    OUT ICR1L, temp
+
+    ; Initialize duty cycle to 50%
+    LDI duty_cycle, 128
+    OUT OCR1AH, duty_cycle
+    CLR temp
+    OUT OCR1AL, temp
+
+    ; Enable Timer1 Compare Match A interrupt
+    LDI temp, (1<<OCIE1A)
+    OUT TIMSK, temp
+
+    ; Set PORTA and PORTC as inputs
+    LDI temp, 0x00
+    OUT DDRA, temp
+    OUT DDRC, temp
+
+    ; Set OC1A (PB5) as output for PWM
+    SBI DDRB, 5
+
+    CLR counter
+    SEI  ; Enable global interrupts
+
+Loop:
+    IN desired_speed, PINC   ; Read desired speed from PORTC
+    IN current_speed, PINA   ; Read current speed from PORTA
+
+    ; Compare current speed with desired speed
+    CP current_speed, desired_speed
+    BREQ no_change
+    BRLO increase_speed
+    RJMP decrease_speed
+
+no_change:
+    CLR counter
+    RJMP Loop
+
+increase_speed:
+    INC counter
+    CPI counter, 125         ; Check if 5 seconds have passed (25 * 5 = 125 interrupts)
+    BRNE Loop
+    SUBI duty_cycle, -8      ; Increase duty cycle by ~3%
+    CLR counter
+    RJMP update_pwm
+
+decrease_speed:
+    INC counter
+    CPI counter, 125         ; Check if 5 seconds have passed
+    BRNE Loop
+    SUBI duty_cycle, 8       ; Decrease duty cycle by ~3%
+    CLR counter
+    RJMP update_pwm
+
+update_pwm:
+    ; Ensure duty cycle is within 0-255 range
+    CPI duty_cycle, 255
+    BRLO set_pwm
+    LDI duty_cycle, 255
+set_pwm:
+    OUT OCR1AH, duty_cycle
+    CLR temp
+    OUT OCR1AL, temp
+    RJMP Loop
+
+Timer1_COMPA:
+    INC counter
+    RETI
+
